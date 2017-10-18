@@ -8,6 +8,17 @@ input/*.rds
 # cache
 cache/*.csv
 cache/*.rds
+cache/level1_feats/*.rds
+cache/level1_models/*.rds
+cache/level1_preds/*.rds
+cache/level1_files.RData
+
+
+# submission files
+subs/*.csv
+
+# xgboost auto save files
+*xgboost.model*
 
 
 # Rproj stuff
