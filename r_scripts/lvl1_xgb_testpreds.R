@@ -83,7 +83,7 @@ for(i in 1:num_pred_sets) {
 # bag all (mean) the values across rows (different models) to get mean score
 test_pred_mat_bagged <- apply(test_pred_mat, 1, mean)
 bagged_sub <- data.frame(id=test$id, target=test_pred_mat_bagged)
-write.csv(bagged_sub, "subs/04_bagged_sub_all_after_34_iters.csv", row.names=F)
+write.csv(bagged_sub, "subs/05_bagged_sub_all_after_94_iters.csv", row.names=F)
 
 
 
