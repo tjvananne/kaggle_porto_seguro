@@ -13,18 +13,7 @@
 source("r_scripts/lvl1_xgb_config.R")
 test <- readRDS("input/test.rds")
 samp <- read.csv("input/sample_submission.csv", stringsAsFactors = F)
-lvl1_results <- read.csv("r_scripts/level1_results.csv", stringsAsFactors = F)
-
-    # lvl1_res_auc <- lvl1_results[grepl("=auc", lvl1_results$paramkey), ]
-    # lvl1_res_logloss <- lvl1_results[grepl("=logloss", lvl1_results$paramkey), ]
-    lvl1_res_error <- lvl1_results[grepl("=error", lvl1_results$paramkey), ]
-    # 
-    # 
-    # lvl1_res_auc$iteration[which.max(lvl1_res_auc$cv_score)]           # iteration #31 is the best in auc
-    # lvl1_res_logloss$iteration[which.min(lvl1_res_logloss$cv_score)]   # iteration #34 is the best in logloss
-    # lvl1_res_error$iteration[which.min(lvl1_res_error$cv_score)]       # iteration #1 is the best in error
-
-
+lvl1_results <- read.csv("cache/level1_results.csv", stringsAsFactors = F)
 
 
 
@@ -36,10 +25,64 @@ num_pred_sets <- nrow(lvl1_results)
 
 
 
-# loading and process training preds -------------------------------------------------------------
+# single model holdout gini / PLB gini comparison -----------------------------------------------
+
+lvl1_results %>% filter(eval_metric == "logloss") %>%
+    arrange(cv_score) %>% 
+    select(-paramkey) %>%
+    top_n(10, -cv_score)
+
+# let's use level 1 and iteration 0036 for first gini / plb gini comparison
+single_mod <- readRDS(list.files(fp_dir_models, full.names = T)[grepl("0036", list.files(fp_dir_models))])
+single_feats <- readRDS(list.files(fp_dir_feats, full.names = T)[grepl("0036", list.files(fp_dir_models))])
+single_HO <- trainHO %>% select(single_feats)
+single_HO_dmat <- xgb.DMatrix(as.matrix(single_HO))
+single_HO_preds <- predict(single_mod, single_HO_dmat)
+normalizedGini(YHO, single_HO_preds)
+
+
+single_test <- test %>% select(single_feats)
+single_test_dmat <- xgb.DMatrix(as.matrix(single_test))
+single_test_preds <- predict(single_mod, single_test_dmat)
+single_test_sub <- data.frame(id=test$id, target=single_test_preds)
+write.csv(single_test_sub, "subs/06_0036_0dot268_ho_gini_single_best_logloss.csv", row.names = F)
+
+    #' 0036 logloss model scored 0.268 gini for local holdout and 0.269 on public leader board
+
+
+
+
+
+
+
+
+# loading and process training preds (for level 2 FINAL stacker - will need another version for intermediate stacker) ---------
+library(glmnet)
+
 load("cache/level1_files.RData")
-rm(train, trainA, trainB, Y) # I just want idA, idB, YA, YB
+rm(train, trainA, trainB, Y) # I just want idA, idB, idHO, YA, YB, YHO 
 gc()
+
+
+stack1_preds <- paste0("_01_", "preds_", sprintf("%04.0f", 1:max(lvl1_results$iteration)))
+stack1_feats <- paste0("_01_", "feats_", sprintf("%04.0f", 1:max(lvl1_results$iteration)))
+
+
+stack1_preds_mat <- matrix(rep(rep(0, (length(YA) + length(YB))), length(stack1_preds)), ncol=length(stack1_preds))
+for(i in 1:length(stack1_preds)) {
+    
+    stack1_preds_ <- readRDS(list.files("cache/level1_preds", full.names = T)[grepl(stack1_preds[i], list.files("cache/level1_preds"))])
+    if(i == 1) {
+        ids_ <- stack1_preds_$id  # store ids on first iteration, assert that id's on all files loaded in match
+    } else {
+        assert_that(all(stack1_preds_$id == ids_))
+    }
+    stack1_preds_mat[, i] <- stack1_preds_[, 2]
+}
+
+glmn_cv1 <- cv.glmnet(x=stack1_preds_mat, y=c(YA, YB), family="binomial")
+plot(glmn_cv1)
+
 
 files_preds
 

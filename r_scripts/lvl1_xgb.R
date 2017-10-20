@@ -18,7 +18,7 @@ source("r_scripts/lvl1_xgb_config.R")
     }
     
     if(!file.exists(fp_results)) {
-        cat("level,iteration,paramkey,cv_score,best_nrounds\n", file=fp_results)
+        cat("level,iteration,eval_metric,paramkey,cv_score,best_nrounds\n", file=fp_results)
     }
 
 
@@ -30,6 +30,17 @@ source("r_scripts/lvl1_xgb_config.R")
         train <- readRDS('input/train.rds')
             assert_that(all(train$id[order(train$id)] == train$id))
         
+        # fixing a flaw from previous version, now we have a holdout to test against public leader board
+        set.seed(1776)
+        indxHO <- caret::createDataPartition(train$target, p=0.15, list=F)
+        trainHO <- train[indxHO, ]
+        YHO <- trainHO$target
+        idHO <- trainHO$id 
+        trainHO$target <- NULL
+        train <- train[-indxHO, ]    
+            assert_that(length(intersect( trainHO$id, train$id )) == 0)  # assert no overlap in ids between train / holdout
+        
+            
         set.seed(1776)
         indxA <- caret::createDataPartition(train$target, p=0.5, list=F)
         trainA <- train[indxA, ]
@@ -45,7 +56,14 @@ source("r_scripts/lvl1_xgb_config.R")
         Y <- train$target
         train$target <- NULL
         
-        save(train, Y, trainA, YA, idA, trainB, YB, idB, file=data_cache_fp)
+            assert_that(length(intersect(trainHO$id, trainA$id)) == 0)
+            assert_that(length(intersect(trainHO$id, trainB$id)) == 0)
+            prop.table(table(YHO))
+            prop.table(table(YA))
+            prop.table(table(YB))
+            prop.table(table(Y))
+                        
+        save(train, Y, trainA, YHO, idHO, trainHO, YA, idA, trainB, YB, idB, file=data_cache_fp)
     } else {
         print("cache exists, loading level 1 data split now...")
         load(data_cache_fp)
@@ -57,7 +75,7 @@ set.seed(1776)
 
 all_xgb_params <- list(
     "objective" = "binary:logistic",
-    "eval_metric" = c("logloss", "error", "auc"),  # <- must handle min/max depending on eval metric
+    "eval_metric" = c("logloss", "auc"),  # <- I took "error" out, data is too imbalanced for that
     "eta" = c(0.01, 0.05, 0.1),
     "max_depth" = c(3, 5, 7),
     "subsample" = c(0.4, 0.6, 0.9),
@@ -85,15 +103,16 @@ if(length(prior_results$iteration) > 0) {
 
 
 
-for(i in min_i:999) {
+for(i in min_i:9999) {
     print(paste0("***** at iteration **********************************************  ", i))
     set.seed((1776 * i))
     
     # set up file paths:
-    iter <- sprintf("%03.0f", i)
+    iter <- sprintf("%04.0f", i)
     fp_model <- file.path(fp_dir_models, paste0("lvl_", exp_level, "_model_", iter, ".rds"))
     fp_feats <- file.path(fp_dir_feats, paste0("lvl_", exp_level, "_feats_", iter, ".rds"))
-    fp_preds <- file.path(fp_dir_preds, paste0("lvl_", exp_level, "_feats_", iter, ".rds"))
+    fp_preds <- file.path(fp_dir_preds, paste0("lvl_", exp_level, "_preds_", iter, ".rds")) 
+    
     
     
     # select xgb params:
@@ -122,7 +141,7 @@ for(i in min_i:999) {
         data=train_dmat_,
         nfold=5,
         params=xgb_params,
-        nrounds=1500,
+        nrounds=2000,
         early_stopping_rounds=40,
         print_every_n=1501)
     
@@ -146,7 +165,7 @@ for(i in min_i:999) {
         data=train_dmat_,
         nrounds=best_nrounds,
         params=xgb_params,
-        print_every_n = 1501,
+        print_every_n = 100,
         save_period = NULL)
     saveRDS(xgb_all_, fp_model)
     
@@ -185,8 +204,9 @@ for(i in min_i:999) {
     saveRDS(feat_sample, file=fp_feats)
     
     # write out results
-    cat( paste0(exp_level, ",", iter, ",", xgb_paramkey, ",", cv_score, ",", best_nrounds, "\n"),  file=fp_results, append=T)
+    cat( paste0(exp_level, ",", iter, ",", xgb_params$eval_metric, ",",  xgb_paramkey, ",", cv_score, ",", best_nrounds, "\n"),  file=fp_results, append=T)
     gc()
+    
 }
 
 
