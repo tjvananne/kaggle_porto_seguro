@@ -9,7 +9,6 @@ archive/*
 
 
 # cache
-cache/*.csv
 cache/*.rds
 cache/level1_files.RData
 
