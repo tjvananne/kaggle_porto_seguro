@@ -8,6 +8,8 @@ library(dplyr)
 library(ggplot2)
 library(caret)
 library(assertthat)
+library(glmnet)
+library(corrplot)
 
 
 data_cache_fp <- "cache/level1_files.RData"

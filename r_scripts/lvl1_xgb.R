@@ -129,6 +129,11 @@ for(i in min_i:9999) {
     trainA_ <- trainA[, feat_sample]
     trainB_ <- trainB[, feat_sample]
     
+        # preventing some XGBoost error where all features are integer instead of numeric
+        train_ <- data.frame(lapply(train_, as.numeric))
+        trainA_ <- data.frame(lapply(trainA_, as.numeric))
+        trainB_ <- data.frame(lapply(trainB_, as.numeric))
+        
     train_dmat_ <- xgb.DMatrix(as.matrix(train_), label=Y)
     trainA_dmat_ <- xgb.DMatrix(as.matrix(trainA_), label=YA)
     trainB_dmat_ <- xgb.DMatrix(as.matrix(trainB_), label=YB)            
