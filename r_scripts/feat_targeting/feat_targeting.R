@@ -13,28 +13,40 @@ test <- readRDS("input/test.rds")
 # type: 8 class multi
 # removals: target, id, 
 set.seed(this_seed)
+table(train$ps_ind_01)
 x1_ho_indx <- caret::createDataPartition(y=train$ps_ind_01, times=1, p=0.25, list=F)
 x1_train <- train[-x1_ho_indx, ]
 x1_ho <- train[x1_ho_indx, ]
 
-    # fix and rebalance
-    
+    # fix and rebalance -- we can probably use much smaller samples
+    table(x1_train$ps_ind_01)
+    x1_train_bal <- rbind(
+        x1_train %>% filter(ps_ind_01 == 0) %>% sample_n(50000, replace=nrow(.) < 50000),
+        x1_train %>% filter(ps_ind_01 == 1) %>% sample_n(50000, replace=nrow(.) < 50000),
+        x1_train %>% filter(ps_ind_01 == 2) %>% sample_n(50000, replace=nrow(.) < 50000),
+        x1_train %>% filter(ps_ind_01 == 3) %>% sample_n(50000, replace=nrow(.) < 50000),
+        x1_train %>% filter(ps_ind_01 == 4) %>% sample_n(50000, replace=nrow(.) < 50000),
+        x1_train %>% filter(ps_ind_01 == 5) %>% sample_n(50000, replace=nrow(.) < 50000),
+        x1_train %>% filter(ps_ind_01 == 6) %>% sample_n(50000, replace=nrow(.) < 50000),
+        x1_train %>% filter(ps_ind_01 == 7) %>% sample_n(50000, replace=nrow(.) < 50000))
+    table(x1_train_bal$ps_ind_01)
 
 
-x1_train_y <- x1_train$ps_ind_01
+
+x1_train_bal_y <- x1_train_bal$ps_ind_01
 x1_ho_y <- x1_ho$ps_ind_01
 x1_removals <- c("ps_ind_01", "target", "id")
-x1_train <- x1_train[, setdiff(names(x1_train), x1_removals)]
+x1_train_bal <- x1_train_bal[, setdiff(names(x1_train_bal), x1_removals)]
 x1_ho <- x1_ho[, setdiff(names(x1_ho), x1_removals)]
-x1_train_dmat <- xgb.DMatrix(as.matrix(x1_train), label=x1_train_y)
+x1_train_bal_dmat <- xgb.DMatrix(as.matrix(x1_train_bal), label=x1_train_bal_y)
 x1_ho_dmat <- xgb.DMatrix(as.matrix(x1_ho), label=x1_ho_y)
 x1_params <-  list(
     # "objective" = "binary:logistic",
     # "eval_metric" = "auc",  
     "objective" = "multi:softprob",
     "eval_metric" = "mlogloss",
-    "num_class" = length(unique(x1_train_y)),  # <-- 8 classes including "0"
-    "eta" = 0.01,
+    "num_class" = length(unique(x1_train_bal_y)),  # <-- 8 classes including "0"
+    "eta" = 1,
     "max_depth" = 7,
     "subsample" = 0.8,
     "colsample_bytree" = 0.5,
@@ -45,25 +57,38 @@ x1_params <-  list(
     "scale_pos_weight" = 1,
     "nthread" = 4)
 x1_xgb_cv <- xgb.cv(
-    data= x1_train_dmat,
+    data= x1_train_bal_dmat,
     nfold=5,
     params=x1_params,
     nrounds=4000,
     early_stopping_rounds = 50,
-    print_every_n = 5)
-x1_nrounds <- which.min(x1_xgb_cv$evaluation_log$test_rmse_mean)
+    print_every_n = 1)
+x1_nrounds <- which.min(x1_xgb_cv$evaluation_log$test_mlogloss_mean)
 x1_xgb <- xgboost::xgb.train(
-    data=x1_train_dmat,
+    data=x1_train_bal_dmat,
     nrounds=x1_nrounds,
-    params = x1_params)
-x1_feat_imp <- xgboost::xgb.importance(feature_names = names(x1_train), model=x1_xgb)
+    params = x1_params,
+    print_every_n=1)
+x1_feat_imp <- xgboost::xgb.importance(feature_names = names(x1_train_bal), model=x1_xgb)
 xgboost::xgb.plot.importance(x1_feat_imp[1:20,])
-x1_preds <- as.data.frame(matrix(predict(x1_xgb, x1_ho_dmat), ncol=length(unique(x1_train_y)), byrow=T))
+x1_preds <- as.data.frame(matrix(predict(x1_xgb, x1_ho_dmat), ncol=length(unique(x1_train_bal_y)), byrow=T))
 names(x1_preds) <- paste0("feat_tar_", "ps_ind_01", "_", 0:7)
 x1_preds <- cbind(x1_ho_y, x1_preds)
-saveRDS(x1_xgb, file="cache/feat_targeting/ft_mods/ft01_ps_ind_01_mod.rds")
-saveRDS(names(x1_train), file="cache/feat_targeting/ft_feats/ft01_ps_ind_01_feats.rds")
 
+
+
+hist(x1_preds$feat_tar_ps_ind_01_0[x1_preds$x1_ho_y == 0])
+hist(x1_preds$feat_tar_ps_ind_01_1[x1_preds$x1_ho_y == 1])
+hist(x1_preds$feat_tar_ps_ind_01_2[x1_preds$x1_ho_y == 2])
+hist(x1_preds$feat_tar_ps_ind_01_3[x1_preds$x1_ho_y == 3])
+# gather into long format but leave the x1_ho_y answer there...
+# summarise (find the mean) of each of the gathered values
+
+
+
+saveRDS(x1_xgb, file="cache/feat_targeting/ft_mods/ft01_ps_ind_01_mod.rds")
+saveRDS(names(x1_train_bal), file="cache/feat_targeting/ft_feats/ft01_ps_ind_01_feats.rds")
+# just saved these
 
 
 
