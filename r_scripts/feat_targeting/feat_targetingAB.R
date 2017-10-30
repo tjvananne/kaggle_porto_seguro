@@ -1657,4 +1657,168 @@ gc()
 
 
 
+# x11 --------------------------
+# target: ps_ind_04_cat
+# type: 8 class multi
+# removals: target, id, 
+set.seed(this_seed)
+x11_rem_feats <- readRDS(fp_ft_remaining_feats)
+x11_target <- "ps_ind_10_bin"
+table(train[, x11_target])
+x11_samp_size <- 1500
+
+
+# classes should start at zero
+x11_trainA <- data.frame(trainA)
+x11_trainB <- data.frame(trainB)
+
+
+# do this before fixing target variable
+x11_ho_indx <- caret::createDataPartition(y=trainA[, x11_target], times=1, p=0.10, list=F)
+x11_ho <- rbind(x11_trainA[x11_ho_indx, ], x11_trainB[x11_ho_indx, ])
+x11_trainA <- x11_trainA[-x11_ho_indx, ]
+x11_trainB <- x11_trainB[-x11_ho_indx, ]
+
+# fix target value here if necessary
+x11_trainA <- x11_trainA[x11_trainA[, x11_target] >= 0,]
+x11_trainB <- x11_trainB[x11_trainB[, x11_target] >= 0, ]
+table(x11_trainA[, x11_target])
+table(x11_trainB[, x11_target])
+
+
+# unique target values should be the same across A/B
+assert_that(all(intersect(unique(x11_trainA[, x11_target]), unique(x11_trainB[, x11_target])) %in% x11_trainA[, x11_target]))
+assert_that(all(intersect(unique(x11_trainA[, x11_target]), unique(x11_trainB[, x11_target])) %in% x11_trainB[, x11_target]))
+
+# take equalized samples of each of the target variable
+x11_trainA_bal <- take_equal_sample(x11_trainA, x11_samp_size, x11_target, unique(x11_trainA[, x11_target]))
+x11_trainB_bal <- take_equal_sample(x11_trainB, x11_samp_size, x11_target, unique(x11_trainB[, x11_target]))
+x11_train_bal <- rbind(x11_trainA_bal, x11_trainB_bal)    
+table(x11_trainA_bal[, x11_target])
+
+
+x11_trainA_bal_y <- x11_trainA_bal[, x11_target]
+x11_trainB_bal_y <- x11_trainB_bal[, x11_target]
+x11_train_bal_y <- c(x11_trainA_bal_y, x11_trainB_bal_y)
+x11_ho_y <- x11_ho[, x11_target]
+x11_removals <- c(x11_target, "target", "id", "ps_ind_14") #, "ps_ind_07_bin", "ps_ind_08_bin", "ps_ind_06_bin")
+
+
+x11_trainA_bal <- x11_trainA_bal[, setdiff(names(x11_trainA_bal), x11_removals)]
+x11_trainB_bal <- x11_trainB_bal[, setdiff(names(x11_trainB_bal), x11_removals)]
+x11_train_bal <- x11_train_bal[, setdiff(names(x11_train_bal), x11_removals)]
+x11_ho <- x11_ho[, setdiff(names(x11_ho), x11_removals)]
+
+x11_trainA_bal_dmat <- xgb.DMatrix(as.matrix(x11_trainA_bal), label=x11_trainA_bal_y)
+x11_trainB_bal_dmat <- xgb.DMatrix(as.matrix(x11_trainB_bal), label=x11_trainB_bal_y)
+x11_train_bal_dmat <- xgb.DMatrix(as.matrix(x11_train_bal), label=x11_train_bal_y)
+x11_ho_dmat <- xgb.DMatrix(as.matrix(x11_ho), label=x11_ho_y)
+
+x11_params <-  list(
+    "objective" = "binary:logistic",
+    "eval_metric" = "auc",  
+    # "objective" = "multi:softprob",
+    # "eval_metric" = "mlogloss",
+    # "num_class" = length(unique(x11_trainA_bal_y)),  # <-- 8 classes including "0"
+    "eta" = 0.4,
+    "max_depth" = 5,
+    "subsample" = 0.8,
+    "colsample_bytree" = 0.5,
+    "lambda" = 0,
+    "alpha" = 1,
+    "gamma" = 0,
+    "max_delta_step" = 1,
+    "scale_pos_weight" = 1,
+    "nthread" = 4) # 131 best nrounds
+
+
+# first train the combined model
+x11_nrounds <- 5
+x11_xgb <- xgboost::xgboost(
+    nrounds=x11_nrounds,
+    # nrounds=1, xgb_model=x11_xgb,  # for additional training rounds on already trained model
+    data=x11_train_bal_dmat,
+    params=x11_params,
+    print_every_n=1, save_period = NULL, save_name = NULL)
+
+
+{
+    # feature importance for cheater removal
+    x11_feat_imp <- xgboost::xgb.importance(feature_names = names(x11_train_bal), model=x11_xgb)
+    xgboost::xgb.plot.importance(x11_feat_imp[1:20,])
+    
+    
+    # control flow for which plotting route to take based on the type of model 
+    if(x11_params$objective == "multi:softprob") {
+        # multi classification
+        x11_preds <- as.data.frame(matrix(predict(x11_xgb, x11_ho_dmat), ncol=length(unique(x11_train_bal_y)), byrow=T))
+        names(x11_preds) <- paste0("feat_tar_x11_", x11_target, "_", sprintf("%02.0f", 0:(length(unique(x11_trainA_bal_y)) - 1)))
+        x11_preds <- cbind(x11_ho_y, x11_preds)
+        x11_preds_gath <- tidyr::gather(x11_preds, pred_cat, pred_val, -x11_ho_y) %>% 
+            group_by(x11_ho_y, pred_cat) %>%
+            summarise(mean_pred_val = mean(pred_val, na.rm=T)) %>% ungroup
+        ggplot(x11_preds_gath, aes(x=x11_ho_y, y=pred_cat, fill=mean_pred_val)) +
+            geom_tile(color="White", size=0.1) +
+            # scale_fill_viridis(name="Mean Prediction") +
+            scale_fill_viridis(name="Mean Prediction", limits=c(0.001, (2* (1/length(unique(x11_train_bal_y)))))) +
+            coord_equal() +  
+            ggtitle(paste0("Mean Predictions: ", x11_target, " after ", x11_xgb$niter, " nrounds"))
+    } else if(x11_params$objective == "binary:logistic") {
+        # binary classification -- not tested yet
+        x11_preds <- data.frame(actual=x11_ho_y, preds=predict(x11_xgb, x11_ho_dmat))
+        ggplot(x11_preds, aes(x=preds, fill=as.factor(actual))) +
+            geom_density(alpha=0.5, position='identity') +
+            ggtitle(paste0("Prediction density: ", x11_target, " after ", x11_xgb$niter, " nrounds"))
+    } else if(x11_params$objective == "reg:linear") {
+        # linear regression -- not tested yet
+        x11_preds <- data.frame(actual=x11_ho_y, preds=predict(x11_xgb, x11_ho_dmat))
+        x11_preds$residual <- x11_preds$actual - x11_preds$preds
+        ggplot(x11_preds, x=actual, y=residual) +
+            geom_point(alpha=0.4) + 
+            ggtitle(paste0("Prediction residuals: ", x11_target, " after ", x11_xgb$niter, " nrounds"))
+    }
+}  # feature importance and model plot
+
+
+# in depth analysis of multi classi
+x11_preds_manual_gath <- tidyr::gather(x11_preds, pred_cat, pred_val, -x11_ho_y)
+x11_ho_y_val <- 3
+ggplot(data=x11_preds_manual_gath %>% filter(x11_ho_y == x11_ho_y_val), aes(x=pred_val, fill=as.factor(pred_cat))) +
+    geom_histogram(alpha=0.3, position='identity') +
+    ggtitle(paste0("Investigating where ho_y = ", x11_ho_y_val, " and nrounds = ", x11_xgb$niter))
+
+
+# if results above look good, train model B and the combined AB model
+x11_xgbB <- xgboost::xgboost(
+    data=x11_trainB_bal_dmat,
+    nrounds=x11_xgb$niter,    # <-- safer in case we add more rounds manually
+    params = x11_params,
+    print_every_n=1, save_period = NULL, save_name = NULL)
+
+
+# train model A first
+x11_xgbA <- xgboost::xgboost(
+    data=x11_trainA_bal_dmat,
+    nrounds=x11_xgb$niter,
+    params=x11_params,
+    print_every_n=1, save_period = NULL, save_name = NULL)
+
+# write it all out    
+saveRDS(x11_xgbA, file=paste0(fp_ft_modsA, "ft_x11_", x11_target, "_mod.rds"))
+saveRDS(x11_xgbB, file=paste0(fp_ft_modsB, "ft_x11_", x11_target, "_mod.rds"))
+saveRDS(x11_xgb, file=paste0(fp_ft_modsAB, "ft_x11_", x11_target, "_mod.rds"))
+saveRDS(names(x11_train_bal), file=paste0(fp_ft_feats, "ft_x11_", x11_target, "_mod.rds"))
+
+# update remaining features
+x11_rem_feats <- readRDS(fp_ft_remaining_feats)
+x11_rem_feats <- setdiff(x11_rem_feats, x11_target)
+saveRDS(x11_rem_feats, fp_ft_remaining_feats)
+
+rm(list=ls()[grepl("^x11_", ls())])
+gc()
+
+
+
+
+
 
